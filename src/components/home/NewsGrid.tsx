@@ -74,7 +74,7 @@ export default function NewsTabs() {
                   className="group"
                 >
                   <div className="relative aspect-video overflow-hidden mb-4 bg-zinc-900 group">
-                    {item.imageUrl.includes('video') || item.imageUrl.endsWith('.mp4') || item.imageUrl.includes('storage.googleapis.com') ? (
+                    {item.imageUrl.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) || item.imageUrl.includes('video') ? (
                       <video 
                         src={item.imageUrl} 
                         className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"

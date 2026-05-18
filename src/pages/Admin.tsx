@@ -17,28 +17,45 @@ import {
 import { 
   newsService, 
   adService, 
+  clubService,
   NewsArticle, 
-  Ad 
+  Ad,
+  Club 
 } from '../services/db';
 import { uploadFile } from '../services/storage';
-import { auth } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { collection, getCountFromServer } from 'firebase/firestore';
 import { cn } from '../lib/utils';
-import { Upload, X as XIcon, Loader2 } from 'lucide-react';
+import { Upload, X as XIcon, Loader2, ShieldCheck } from 'lucide-react';
 
 export default function Admin() {
   const [user, setUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<'stats' | 'news' | 'ads'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'news' | 'ads' | 'clubs'>('stats');
   const [news, setNews] = useState<NewsArticle[]>([]);
   const [ads, setAds] = useState<Ad[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [totalNewsCount, setTotalNewsCount] = useState(0);
+  const [totalAdsCount, setTotalAdsCount] = useState(0);
+  const [totalClubsCount, setTotalClubsCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
+
+  // Pagination states
+  const [lastNewsDoc, setLastNewsDoc] = useState<any>(null);
+  const [lastAdDoc, setLastAdDoc] = useState<any>(null);
+  const [hasMoreNews, setHasMoreNews] = useState(true);
+  const [hasMoreAds, setHasMoreAds] = useState(true);
 
   // Form states
   const [isAddingNews, setIsAddingNews] = useState(false);
   const [isAddingAd, setIsAddingAd] = useState(false);
+  const [isAddingClub, setIsAddingClub] = useState(false);
   const [editingNewsId, setEditingNewsId] = useState<string | null>(null);
   const [editingAdId, setEditingAdId] = useState<string | null>(null);
+  const [editingClubId, setEditingClubId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
 
@@ -47,6 +64,9 @@ export default function Admin() {
   });
   const [newAd, setNewAd] = useState<Partial<Ad>>({
     title: '', type: 'horizontal', imageUrl: '', link: '', isActive: true, startDate: '', endDate: '', section: 'Geral'
+  });
+  const [newClub, setNewClub] = useState<Partial<Club>>({
+    name: '', logoUrl: '', websiteUrl: '', order: 0
   });
 
   useEffect(() => {
@@ -63,13 +83,74 @@ export default function Admin() {
 
   const fetchData = async () => {
     setLoading(true);
-    const [newsData, adsData] = await Promise.all([
-      newsService.getLatestNews(50),
-      adService.getAds()
-    ]);
-    if (newsData) setNews(newsData);
-    if (adsData) setAds(adsData);
-    setLoading(false);
+    try {
+      const [newsResult, adsResult, newsCount, adsCount, clubsData, clubsCount] = await Promise.all([
+        newsService.getNewsPaginated(10),
+        adService.getAdsPaginated(12),
+        getCountFromServer(collection(db, 'news')),
+        getCountFromServer(collection(db, 'ads')),
+        clubService.getClubs(),
+        getCountFromServer(collection(db, 'clubs'))
+      ]);
+      
+      if (newsResult) {
+        setNews(newsResult.articles);
+        setLastNewsDoc(newsResult.lastVisible);
+        setHasMoreNews(newsResult.articles.length === 10);
+      }
+      
+      if (adsResult) {
+        setAds(adsResult.ads);
+        setLastAdDoc(adsResult.lastVisible);
+        setHasMoreAds(adsResult.ads.length === 12);
+      }
+
+      if (clubsData) {
+        setClubs(clubsData);
+      }
+
+      setTotalNewsCount(newsCount.data().count);
+      setTotalAdsCount(adsCount.data().count);
+      setTotalClubsCount(clubsCount.data().count);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMoreNews = async () => {
+    if (!lastNewsDoc || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await newsService.getNewsPaginated(10, lastNewsDoc);
+      if (result) {
+        setNews(prev => [...prev, ...result.articles]);
+        setLastNewsDoc(result.lastVisible);
+        setHasMoreNews(result.articles.length === 10);
+      }
+    } catch (error) {
+      console.error('Error loading more news:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const loadMoreAds = async () => {
+    if (!lastAdDoc || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await adService.getAdsPaginated(12, lastAdDoc);
+      if (result) {
+        setAds(prev => [...prev, ...result.ads]);
+        setLastAdDoc(result.lastVisible);
+        setHasMoreAds(result.ads.length === 12);
+      }
+    } catch (error) {
+      console.error('Error loading more ads:', error);
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -98,6 +179,15 @@ export default function Admin() {
   const clearFile = () => {
     setSelectedFile(null);
     setFilePreview(null);
+  };
+
+  const toggleAdStatus = async (ad: Ad) => {
+    try {
+      await adService.updateAd(ad.id!, { isActive: !ad.isActive });
+      fetchData();
+    } catch (error) {
+      console.error('Error toggling ad status:', error);
+    }
   };
 
   const handleEditNews = (item: NewsArticle) => {
@@ -132,7 +222,10 @@ export default function Admin() {
     
     try {
       if (selectedFile) {
-        finalImageUrl = await uploadFile(selectedFile, 'news');
+        console.log('Iniciando upload de ficheiro:', selectedFile.name);
+        setUploadProgress(0);
+        finalImageUrl = await uploadFile(selectedFile, 'news', (progress) => setUploadProgress(progress));
+        console.log('Upload concluído. URL:', finalImageUrl);
       }
       
       if (editingNewsId) {
@@ -146,11 +239,51 @@ export default function Admin() {
       clearFile();
       setNewArticle({ title: '', excerpt: '', content: '', imageUrl: '', category: 'TORNEIOS', isFeatured: false, authorName: '', tags: [] });
       fetchData();
-    } catch (error) {
-      console.error('Error saving news:', error);
-      alert('Erro ao guardar notícia. Verifique as permissões de gravação.');
+    } catch (error: any) {
+      console.error('Erro detalhado ao guardar notícia:', error);
+      alert(`Erro ao guardar: ${error.message || 'Verifique as permissões do Firebase Storage e Database'}`);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleSaveAd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    setUploading(true);
+    let finalImageUrl = newAd.imageUrl || '';
+
+    try {
+      if (selectedFile) {
+        console.log('Iniciando upload de banner:', selectedFile.name);
+        setUploadProgress(0);
+        finalImageUrl = await uploadFile(selectedFile, 'ads', (progress) => setUploadProgress(progress));
+        console.log('Upload de banner concluído. URL:', finalImageUrl);
+      }
+      
+      if (!finalImageUrl || !newAd.type) {
+        alert('É necessário uma imagem ou vídeo para o banner.');
+        setUploading(false);
+        return;
+      }
+
+      if (editingAdId) {
+        await adService.updateAd(editingAdId, { ...newAd, imageUrl: finalImageUrl } as any);
+      } else {
+        await adService.createAd({ ...newAd, imageUrl: finalImageUrl } as any);
+      }
+
+      setIsAddingAd(false);
+      setEditingAdId(null);
+      clearFile();
+      setNewAd({ title: '', type: 'horizontal', imageUrl: '', link: '', isActive: true, startDate: '', endDate: '', section: 'Geral' });
+      fetchData();
+    } catch (error: any) {
+      console.error('Erro detalhado ao guardar anúncio:', error);
+      alert(`Erro ao guardar anúncio: ${error.message || 'Verifique a conexão e permissões'}`);
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -177,39 +310,56 @@ export default function Admin() {
     }
   };
 
-  const handleSaveAd = async (e: React.FormEvent) => {
+  const handleSaveClub = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newClub.name) return;
     
     setUploading(true);
-    let finalImageUrl = newAd.imageUrl || '';
-
+    let finalLogoUrl = newClub.logoUrl || '';
+    
     try {
       if (selectedFile) {
-        finalImageUrl = await uploadFile(selectedFile, 'ads');
+        console.log('Iniciando upload de logotipo:', selectedFile.name);
+        setUploadProgress(0);
+        finalLogoUrl = await uploadFile(selectedFile, 'clubs', (progress) => setUploadProgress(progress));
+        console.log('Upload concluído. URL:', finalLogoUrl);
       }
       
-      if (!finalImageUrl || !newAd.type) {
-        alert('É necessário uma imagem ou vídeo para o banner.');
-        setUploading(false);
-        return;
-      }
-
-      if (editingAdId) {
-        await adService.updateAd(editingAdId, { ...newAd, imageUrl: finalImageUrl } as any);
+      if (editingClubId) {
+        await clubService.updateClub(editingClubId, { ...newClub, logoUrl: finalLogoUrl } as any);
       } else {
-        await adService.createAd({ ...newAd, imageUrl: finalImageUrl } as any);
+        await clubService.createClub({ ...newClub, logoUrl: finalLogoUrl } as any);
       }
 
-      setIsAddingAd(false);
-      setEditingAdId(null);
+      setIsAddingClub(false);
+      setEditingClubId(null);
       clearFile();
-      setNewAd({ title: '', type: 'horizontal', imageUrl: '', link: '', isActive: true, startDate: '', endDate: '', section: 'Geral' });
+      setNewClub({ name: '', logoUrl: '', websiteUrl: '', order: 0 });
       fetchData();
-    } catch (error) {
-      console.error('Error saving ad:', error);
-      alert('Erro ao guardar anúncio.');
+    } catch (error: any) {
+      console.error('Erro ao guardar clube:', error);
+      alert(`Erro: ${error.message}`);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleEditClub = (club: Club) => {
+    setNewClub({
+      name: club.name,
+      logoUrl: club.logoUrl,
+      websiteUrl: club.websiteUrl || '',
+      order: club.order || 0
+    });
+    setEditingClubId(club.id!);
+    setIsAddingClub(true);
+    setFilePreview(club.logoUrl);
+  };
+
+  const handleDeleteClub = async (id: string) => {
+    if (confirm('Deseja eliminar este clube?')) {
+      await clubService.deleteClub(id);
+      fetchData();
     }
   };
 
@@ -252,6 +402,7 @@ export default function Admin() {
                 { id: 'stats', label: 'Dashboard', icon: LayoutDashboard },
                 { id: 'news', label: 'Notícias', icon: Newspaper },
                 { id: 'ads', label: 'Publicidade', icon: ImageIcon },
+                { id: 'clubs', label: 'Clubes', icon: ShieldCheck },
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -299,19 +450,30 @@ export default function Admin() {
                       </div>
                     </div>
                     <div>
-                      <h4 className="text-4xl font-black italic tracking-tighter">{news.length}</h4>
+                      <h4 className="text-4xl font-black italic tracking-tighter">{totalNewsCount}</h4>
                       <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Notícias Publicadas</p>
                     </div>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-6 space-y-4 group hover:border-white transition-all">
                     <div className="flex justify-between items-start">
                       <div className="p-3 bg-white/10 text-white rounded">
-                        <Users size={24} />
+                        <ImageIcon size={24} />
                       </div>
                     </div>
                     <div>
-                      <h4 className="text-4xl font-black italic tracking-tighter">842</h4>
-                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Utilizadores Registados</p>
+                      <h4 className="text-4xl font-black italic tracking-tighter">{totalAdsCount}</h4>
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Banners Ativos</p>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-6 space-y-4 group hover:border-blue-500 transition-all">
+                    <div className="flex justify-between items-start">
+                      <div className="p-3 bg-blue-500/10 text-blue-500 rounded">
+                        <ShieldCheck size={24} />
+                      </div>
+                    </div>
+                    <div>
+                      <h4 className="text-4xl font-black italic tracking-tighter">{totalClubsCount}</h4>
+                      <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Clubes Parceiros</p>
                     </div>
                   </div>
                 </div>
@@ -450,7 +612,15 @@ export default function Admin() {
                         disabled={uploading}
                         className="bg-red-600 text-white px-8 py-3 font-bold uppercase text-[10px] tracking-widest hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
                       >
-                        {uploading ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        {uploading ? (
+                          <div className="flex items-center gap-3">
+                            <Loader2 size={14} className="animate-spin" />
+                            <div className="w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                            </div>
+                            <span className="text-[10px] font-bold">{Math.round(uploadProgress)}%</span>
+                          </div>
+                        ) : <Save size={14} />}
                         {uploading ? 'A CARREGAR...' : editingNewsId ? 'ATUALIZAR NOTÍCIA' : 'GUARDAR NOTÍCIA'}
                       </button>
                       <button type="button" onClick={() => { setIsAddingNews(false); setEditingNewsId(null); clearFile(); }} className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest">CANCELAR</button>
@@ -474,6 +644,15 @@ export default function Admin() {
                     ))}
                     {news.length === 0 && (
                       <div className="text-center py-12 bg-zinc-900 border border-zinc-800 text-zinc-500 uppercase text-xs font-bold tracking-widest">Nenhuma notícia encontrada.</div>
+                    )}
+                    {hasMoreNews && news.length > 0 && (
+                      <button 
+                        onClick={loadMoreNews}
+                        disabled={loadingMore}
+                        className="w-full py-4 bg-zinc-900 border border-zinc-800 text-[10px] font-bold uppercase tracking-widest hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                      >
+                        {loadingMore ? 'A CARREGAR...' : 'CARREGAR MAIS NOTÍCIAS'}
+                      </button>
                     )}
                   </div>
                 )}
@@ -579,7 +758,7 @@ export default function Admin() {
                         
                         {filePreview && (
                           <div className="relative w-40 h-24 bg-zinc-800 rounded overflow-hidden group">
-                            {filePreview.includes('video') || filePreview.endsWith('.mp4') || (selectedFile?.type.startsWith('video')) ? (
+                            {(filePreview.includes('video') || filePreview.match(/\.(mp4|webm|ogg|mov)/i) || (selectedFile?.type.startsWith('video'))) ? (
                               <video src={filePreview} className="w-full h-full object-cover" muted />
                             ) : (
                               <img src={filePreview} className="w-full h-full object-cover" />
@@ -601,7 +780,15 @@ export default function Admin() {
                         disabled={uploading}
                         className="bg-red-600 text-white px-8 py-3 font-bold uppercase text-[10px] tracking-widest hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
                       >
-                        {uploading ? <Loader2 size={14} className="animate-spin" /> : <TrendingUp size={14} />}
+                        {uploading ? (
+                          <div className="flex items-center gap-3">
+                            <Loader2 size={14} className="animate-spin" />
+                            <div className="w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                            </div>
+                            <span className="text-[10px] font-bold">{Math.round(uploadProgress)}%</span>
+                          </div>
+                        ) : <TrendingUp size={14} />}
                         {uploading ? 'A CARREGAR...' : editingAdId ? 'ATUALIZAR CAMPANHA' : 'ATIVAR CAMPANHA'}
                       </button>
                       <button type="button" onClick={() => { setIsAddingAd(false); setEditingAdId(null); clearFile(); }} className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest">CANCELAR</button>
@@ -612,19 +799,36 @@ export default function Admin() {
                     {ads.map(ad => (
                       <div key={ad.id} className="bg-zinc-900 border border-zinc-800 overflow-hidden group">
                         <div className={cn(
-                          "bg-zinc-800 flex items-center justify-center overflow-hidden",
+                          "bg-zinc-800 flex items-center justify-center overflow-hidden relative group/preview",
                           ad.type === 'horizontal' ? 'h-24' : ad.type === 'vertical' ? 'h-48' : 'h-32'
                         )}>
-                          <img src={ad.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          {ad.imageUrl.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) || ad.imageUrl.includes('video') ? (
+                            <video src={ad.imageUrl} className="w-full h-full object-cover" muted />
+                          ) : (
+                            <img src={ad.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          )}
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/preview:opacity-100 transition-opacity flex items-center justify-center">
+                             <a href={ad.link} target="_blank" rel="noopener noreferrer" className="text-[10px] bg-white text-black px-2 py-1 font-bold uppercase">Ver Link</a>
+                          </div>
                         </div>
                         <div className="p-4 flex justify-between items-center">
-                          <div>
-                            <h4 className="font-bold text-xs uppercase tracking-widest">{ad.title || 'Untitled Campaign'}</h4>
-                            <span className="text-[10px] text-zinc-500 font-bold uppercase italic">{ad.type}</span>
+                          <div className="flex-1">
+                            <h4 className="font-bold text-xs uppercase tracking-widest truncate">{ad.title || 'Untitled Campaign'}</h4>
+                            <div className="flex items-center gap-2 mt-1">
+                              <button 
+                                onClick={() => toggleAdStatus(ad)}
+                                className={cn(
+                                  "w-3 h-3 rounded-full transition-all hover:scale-110",
+                                  ad.isActive ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]"
+                                )} 
+                                title={ad.isActive ? "Desativar" : "Ativar"}
+                              />
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase italic">{ad.type} - {ad.isActive ? 'Ativo' : 'Inativo'}</span>
+                            </div>
                           </div>
-                          <div className="flex gap-2">
-                             <button onClick={() => handleEditAd(ad)} className="p-2 bg-zinc-800 hover:text-white transition-all"><Edit3 size={14} /></button>
-                             <button onClick={() => handleDeleteAd(ad.id)} className="p-2 bg-zinc-800 hover:text-red-500 transition-all"><Trash2 size={14} /></button>
+                          <div className="flex gap-2 shrink-0">
+                             <button onClick={() => handleEditAd(ad)} className="p-2 bg-zinc-800 hover:text-white transition-all" title="Editar"><Edit3 size={14} /></button>
+                             <button onClick={() => handleDeleteAd(ad.id!)} className="p-2 bg-zinc-800 hover:text-red-500 transition-all" title="Eliminar"><Trash2 size={14} /></button>
                           </div>
                         </div>
                       </div>
@@ -632,11 +836,143 @@ export default function Admin() {
                     {ads.length === 0 && (
                       <div className="md:col-span-2 text-center py-12 bg-zinc-900 border border-zinc-800 text-zinc-500 uppercase text-xs font-bold tracking-widest">Nenhuma campanha ativa.</div>
                     )}
+                    {hasMoreAds && ads.length > 0 && (
+                      <div className="md:col-span-2">
+                        <button 
+                          onClick={loadMoreAds}
+                          disabled={loadingMore}
+                          className="w-full py-4 bg-zinc-900 border border-zinc-800 text-[10px] font-bold uppercase tracking-widest hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                        >
+                          {loadingMore ? 'A CARREGAR...' : 'CARREGAR MAIS CAMPANHAS'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+            {activeTab === 'clubs' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-4">
+                  <h3 className="font-bold uppercase tracking-widest">Gestão de Clubes</h3>
+                  {!isAddingClub && (
+                    <button 
+                      onClick={() => setIsAddingClub(true)}
+                      className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
+                    >
+                      <Plus size={16} /> Novo Clube
+                    </button>
+                  )}
+                </div>
+
+                {isAddingClub ? (
+                  <form onSubmit={handleSaveClub} className="bg-zinc-900 border border-zinc-800 p-6 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase">Nome do Clube</label>
+                        <input 
+                          value={newClub.name} 
+                          onChange={e => setNewClub({...newClub, name: e.target.value})}
+                          className="w-full bg-zinc-950 border border-zinc-800 p-3 text-sm focus:border-red-600 outline-none"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase">Website / Link Social</label>
+                        <input 
+                          value={newClub.websiteUrl} 
+                          onChange={e => setNewClub({...newClub, websiteUrl: e.target.value})}
+                          className="w-full bg-zinc-950 border border-zinc-800 p-3 text-sm focus:border-red-600 outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase">Ordem de Exibição</label>
+                        <input 
+                          type="number"
+                          value={newClub.order} 
+                          onChange={e => setNewClub({...newClub, order: parseInt(e.target.value)})}
+                          className="w-full bg-zinc-950 border border-zinc-800 p-3 text-sm focus:border-red-600 outline-none"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Logotipo do Clube</label>
+                      <div className="flex flex-col gap-4">
+                        <div className="flex gap-4">
+                          <input 
+                            type="text"
+                            value={newClub.logoUrl} 
+                            onChange={e => setNewClub({...newClub, logoUrl: e.target.value})}
+                            placeholder="URL do Logotipo"
+                            className="flex-1 bg-zinc-950 border border-zinc-800 p-3 text-sm focus:border-red-600 outline-none"
+                            disabled={!!selectedFile}
+                          />
+                          <span className="flex items-center text-[10px] text-zinc-600 font-bold">OU</span>
+                          <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 px-4 py-3 text-white flex items-center gap-2 text-[10px] font-bold uppercase transition-colors">
+                            <Upload size={14} /> Selecionar Ficheiro
+                            <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
+                          </label>
+                        </div>
+                        
+                        {filePreview && (
+                          <div className="relative w-32 h-32 bg-zinc-800 rounded overflow-hidden group border border-zinc-700 p-2">
+                            <img src={filePreview} className="w-full h-full object-contain" />
+                            <button 
+                              type="button"
+                              onClick={clearFile}
+                              className="absolute inset-0 bg-red-600/80 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <XIcon size={20} className="text-white" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 pt-4">
+                      <button 
+                        type="submit" 
+                        disabled={uploading}
+                        className="bg-red-600 text-white px-8 py-3 font-bold uppercase text-[10px] tracking-widest hover:bg-red-700 flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {uploading ? (
+                          <div className="flex items-center gap-3">
+                            <Loader2 size={14} className="animate-spin" />
+                            <div className="w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
+                              <div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                            </div>
+                            <span className="text-[10px] font-bold">{Math.round(uploadProgress)}%</span>
+                          </div>
+                        ) : <Save size={14} />}
+                        {uploading ? 'A CARREGAR...' : editingClubId ? 'ATUALIZAR CLUBE' : 'GUARDAR CLUBE'}
+                      </button>
+                      <button type="button" onClick={() => { setIsAddingClub(false); setEditingClubId(null); clearFile(); }} className="text-zinc-500 font-bold uppercase text-[10px] tracking-widest">CANCELAR</button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    {clubs.map(club => (
+                      <div key={club.id} className="bg-zinc-900 border border-zinc-800 p-4 flex flex-col items-center gap-4 group relative">
+                        <div className="w-20 h-20 bg-white p-2 rounded-lg">
+                          <img src={club.logoUrl} className="w-full h-full object-contain" />
+                        </div>
+                        <h4 className="font-bold text-[10px] uppercase text-center truncate w-full">{club.name}</h4>
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 p-2">
+                           <button onClick={() => handleEditClub(club)} className="p-2 bg-white text-black hover:bg-zinc-200 transition-all"><Edit3 size={14} /></button>
+                           <button onClick={() => handleDeleteClub(club.id!)} className="p-2 bg-red-600 text-white hover:bg-red-700 transition-all"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    ))}
+                    {clubs.length === 0 && (
+                      <div className="col-span-full text-center py-12 bg-zinc-900 border border-zinc-800 text-zinc-500 uppercase text-xs font-bold tracking-widest">Nenhum clube registado.</div>
+                    )}
                   </div>
                 )}
               </div>
             )}
           </main>
+
         </div>
       </div>
     </div>

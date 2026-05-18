@@ -10,7 +10,8 @@ import {
   orderBy, 
   limit,
   serverTimestamp,
-  Timestamp 
+  Timestamp,
+  startAfter 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 
@@ -64,6 +65,22 @@ export interface NewsArticle {
 }
 
 export const newsService = {
+  async getNewsPaginated(pageSize: number = 10, lastDoc?: any) {
+    const path = 'news';
+    try {
+      let q = query(collection(db, path), orderBy('createdAt', 'desc'), limit(pageSize));
+      if (lastDoc) {
+        q = query(collection(db, path), orderBy('createdAt', 'desc'), startAfter(lastDoc), limit(pageSize));
+      }
+      const snapshot = await getDocs(q);
+      const lastVisible = snapshot.docs[snapshot.docs.length - 1];
+      const articles = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as NewsArticle));
+      return { articles, lastVisible };
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, path);
+    }
+  },
+
   async getLatestNews(l = 10) {
     const path = 'news';
     try {
@@ -123,6 +140,22 @@ export interface Ad {
 }
 
 export const adService = {
+  async getAdsPaginated(pageSize: number = 10, lastDoc?: any) {
+    const path = 'ads';
+    try {
+      let q = query(collection(db, path), orderBy('title', 'asc'), limit(pageSize));
+      if (lastDoc) {
+        q = query(collection(db, path), orderBy('title', 'asc'), startAfter(lastDoc), limit(pageSize));
+      }
+      const snapshot = await getDocs(q);
+      const lastVisible = snapshot.docs[snapshot.docs.length - 1];
+      const ads = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Ad));
+      return { ads, lastVisible };
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, path);
+    }
+  },
+
   async getAds() {
     const path = 'ads';
     try {
@@ -141,7 +174,26 @@ export const adService = {
         return true;
       });
     } catch (e) {
+      console.error('Error in getAds:', e);
       handleFirestoreError(e, OperationType.LIST, path);
+    }
+  },
+
+  async getAllAds() {
+    const path = 'ads';
+    try {
+      const q = query(collection(db, path), orderBy('title', 'asc'));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Ad));
+    } catch (e) {
+      console.error('Error in getAllAds:', e);
+      // Fallback to fetch without order if index is missing
+      try {
+        const snapshot = await getDocs(collection(db, path));
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Ad));
+      } catch (e2) {
+        handleFirestoreError(e2, OperationType.LIST, path);
+      }
     }
   },
 
@@ -168,6 +220,65 @@ export const adService = {
     const path = `ads/${id}`;
     try {
       await deleteDoc(doc(db, 'ads', id));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, path);
+    }
+  }
+};
+
+export interface Club {
+  id?: string;
+  name: string;
+  logoUrl: string;
+  websiteUrl?: string;
+  order?: number;
+  createdAt?: any;
+}
+
+export const clubService = {
+  async getClubs() {
+    const path = 'clubs';
+    try {
+      const q = query(collection(db, path), orderBy('order', 'asc'));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Club));
+    } catch (e) {
+      console.error('Error in getClubs:', e);
+      try {
+        const snapshot = await getDocs(collection(db, path));
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Club));
+      } catch (e2) {
+        handleFirestoreError(e2, OperationType.LIST, path);
+      }
+    }
+  },
+
+  async createClub(club: Omit<Club, 'id'>) {
+    const path = 'clubs';
+    try {
+      return await addDoc(collection(db, path), {
+        ...club,
+        createdAt: serverTimestamp(),
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, path);
+    }
+  },
+
+  async updateClub(id: string, club: Partial<Club>) {
+    const path = `clubs/${id}`;
+    try {
+      const docRef = doc(db, 'clubs', id);
+      await updateDoc(docRef, club);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, path);
+    }
+  },
+
+  async deleteClub(id: string) {
+    const path = `clubs/${id}`;
+    try {
+      await deleteDoc(doc(db, 'clubs', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, path);
     }

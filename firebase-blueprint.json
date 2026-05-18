@@ -1,5 +1,17 @@
 {
   "entities": {
+    "Club": {
+      "title": "Club",
+      "description": "Represents a padel club with its logo",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["name", "logoUrl"]
+    },
     "News": {
       "title": "News Article",
       "description": "Represents a news article in the portal",
@@ -58,6 +70,10 @@
     "/events": {
       "schema": "Event",
       "description": "Events collection"
+    },
+    "/clubs": {
+      "schema": "Club",
+      "description": "Clubs collection"
     }
   }
 }

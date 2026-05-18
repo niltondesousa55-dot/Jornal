@@ -40,7 +40,7 @@ export default function AdPlacement({ type, section, className }: AdPlacementPro
     );
   }
 
-  const isVideo = ad.imageUrl.includes('video') || ad.imageUrl.endsWith('.mp4') || ad.imageUrl.includes('storage.googleapis.com'); // Simple heuristic
+  const isVideo = ad.imageUrl.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) || ad.imageUrl.includes('video');
 
   return (
     <a 
