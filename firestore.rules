@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      // Simple check for demo: any authenticated user is admin
+      // In production, check: exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      return isSignedIn(); 
+    }
+    
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    // News Validation
+    function isValidNews(data) {
+      return data.title is string && data.title.size() <= 200 &&
+             data.content is string && data.content.size() <= 10000;
+    }
+
+    // Ad Validation
+    function isValidAd(data) {
+      return data.type in ['horizontal', 'vertical', 'middle'] &&
+             data.imageUrl is string && data.imageUrl.size() <= 2000;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /news/{newsId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidNews(request.resource.data);
+      allow update: if isAdmin() && isValidNews(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /ads/{adId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidAd(request.resource.data);
+      allow update: if isAdmin() && isValidAd(request.resource.data);
+      allow delete: if isAdmin();
+    }
+    
+    match /events/{eventId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

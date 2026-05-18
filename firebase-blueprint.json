@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "News": {
+      "title": "News Article",
+      "description": "Represents a news article in the portal",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "excerpt": { "type": "string" },
+        "content": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "date": { "type": "string", "format": "date-time" },
+        "isFeatured": { "type": "boolean" },
+        "authorName": { "type": "string" },
+        "authorId": { "type": "string" }
+      },
+      "required": ["title", "content", "imageUrl", "category", "date"]
+    },
+    "Ad": {
+      "title": "Advertisement",
+      "description": "Represents a dynamic advertisement banner",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["horizontal", "vertical", "middle"] },
+        "imageUrl": { "type": "string" },
+        "link": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
+        "section": { "type": "string", "description": "Home, News, Ranking, etc" }
+      },
+      "required": ["type", "imageUrl", "isActive"]
+    },
+    "Event": {
+      "title": "Padel Event",
+      "description": "Represents a padel tournament or event",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "location": { "type": "string" }
+      },
+      "required": ["title", "date", "location"]
+    }
+  },
+  "firestore": {
+    "/news": {
+      "schema": "News",
+      "description": "News articles collection"
+    },
+    "/ads": {
+      "schema": "Ad",
+      "description": "Advertisements collection"
+    },
+    "/events": {
+      "schema": "Event",
+      "description": "Events collection"
+    }
+  }
+}

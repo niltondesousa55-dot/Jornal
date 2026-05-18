@@ -1,0 +1,8 @@
+{
+  "name": "Padel Angola Portal",
+  "description": "Portal profissional de informação de Padel em Angola com gestão dinâmica de notícias e publicidade.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
